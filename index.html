@@ -1,0 +1,1523 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>바둑 기보 저장기</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #1a1a1a;
+    --panel-bg: #242424;
+    --border: #3a3a3a;
+    --text: #e8e0d0;
+    --text-dim: #888;
+    --accent: #C49A45;
+  }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Noto Serif KR', serif;
+    overflow: hidden;
+  }
+
+  /* ── Two-column root layout ── */
+  .app {
+    display: flex;
+    width: 100%;
+    /* dvh = dynamic viewport height — accounts for iOS Safari address bar */
+    height: 100dvh;
+    /* fallback for browsers without dvh support */
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  /* LEFT: board — 80% width, full height, vertically centered */
+  .board-section {
+    flex-shrink: 0;
+    width: 80%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 12px 8px 12px 12px;
+    /* iOS safe area padding */
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+
+  .board-title {
+    font-size: 11px;
+    letter-spacing: 4px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+
+  .board-wrap {
+    position: relative;
+    padding-top: 18px;
+    padding-left: 22px;
+    flex-shrink: 0;
+  }
+
+  .col-labels {
+    position: absolute;
+    top: 0; left: 22px;
+    display: flex;
+    pointer-events: none;
+  }
+  .col-labels span {
+    text-align: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--text-dim);
+  }
+
+  .row-labels {
+    position: absolute;
+    top: 18px; left: 0;
+    display: flex;
+    flex-direction: column;
+    pointer-events: none;
+  }
+  .row-labels span {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--text-dim);
+    padding-right: 2px;
+    width: 20px;
+  }
+
+  canvas {
+    display: block;
+    cursor: crosshair;
+    border-radius: 2px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.7);
+  }
+
+  /* RIGHT: panel — fills remaining space, scrollable */
+  .right-panel {
+    flex: 1;
+    min-width: 0;
+    height: 100dvh;
+    height: 100vh;
+    height: 100dvh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+    padding: 12px 12px 12px 8px;
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+    padding-right: max(12px, env(safe-area-inset-right));
+    gap: 8px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  .panel-block {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px 14px;
+    flex-shrink: 0;
+  }
+
+  .panel-label {
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+
+  /* Turn indicator */
+  .turn-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .stone-preview {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .stone-preview.black {
+    background: radial-gradient(circle at 35% 35%, #555, #000);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.8);
+  }
+  .stone-preview.white {
+    background: radial-gradient(circle at 35% 35%, #fff, #d8d0c0);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    border: 1px solid #bbb;
+  }
+  .turn-text { font-size: 13px; }
+  .move-count {
+    margin-left: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 20px;
+    color: var(--accent);
+  }
+
+  /* Buttons */
+  .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  button {
+    font-family: 'Noto Serif KR', serif;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 6px 11px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    background: transparent;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  button:hover { background: #333; border-color: var(--accent); }
+  button.danger { color: #e05; border-color: #e05; }
+  button.danger:hover { background: #2a0008; }
+
+  /* Move log */
+  .log-list {
+    max-height: 260px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .log-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 7px;
+    border-radius: 3px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    background: #2a2a2a;
+    border: 1px solid transparent;
+  }
+  .log-item:last-child { border-color: var(--accent); }
+  .log-item.handicap { background: #201808; border-color: #5a3a10; }
+  .log-item.handicap .log-color { color: var(--accent); }
+  .log-item.captured { background: #1a1a2e; border-color: #4a4a8a; opacity: 0.75; }
+  .log-cap { font-size: 9px; color: #8888cc; background: #2a2a4a; border-radius: 2px; padding: 1px 4px; margin-left: 2px; flex-shrink: 0; }
+  .log-num { color: var(--text-dim); width: 22px; text-align: right; flex-shrink: 0; }
+  .log-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .log-dot.black { background: #222; border: 1px solid #666; }
+  .log-dot.white { background: #f0ece0; border: 1px solid #bbb; }
+  .log-coord { color: var(--text); flex: 1; }
+  .log-color { color: var(--text-dim); font-size: 10px; }
+
+  /* File input */
+  .file-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #111;
+    border: 1px dashed var(--border);
+    border-radius: 3px;
+    padding: 9px 12px;
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--text-dim);
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .file-label:hover { border-color: var(--accent); color: var(--text); }
+  .file-label input[type="file"] { display: none; }
+
+  .copy-notice {
+    font-size: 10px;
+    color: var(--accent);
+    height: 13px;
+    transition: opacity 0.3s;
+  }
+
+  /* Handicap */
+  .handicap-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .handicap-input {
+    width: 48px;
+    background: #111;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    padding: 4px 6px;
+    text-align: center;
+  }
+  .handicap-input:focus { outline: none; border-color: var(--accent); }
+  .handicap-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: #2a1e08;
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    padding: 3px 8px;
+    font-size: 10px;
+    color: var(--accent);
+  }
+  .handicap-badge.hidden { display: none; }
+  .phase-indicator {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 6px;
+    min-height: 14px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .phase-indicator.active { color: #e8a020; }
+
+  /* Capture counter */
+  .capture-row { display: flex; gap: 10px; margin-top: 4px; }
+  .cap-box {
+    flex: 1; background: #111; border: 1px solid var(--border);
+    border-radius: 3px; padding: 6px 10px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .cap-label { font-size: 10px; color: var(--text-dim); }
+  .cap-count { font-family: 'JetBrains Mono', monospace; font-size: 18px; color: var(--accent); }
+
+  /* Replay controls */
+  .replay-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+  .replay-btn {
+    font-size: 16px; padding: 4px 10px; min-width: 36px; text-align: center;
+    border: 1px solid var(--border); border-radius: 3px;
+    background: transparent; color: var(--text); cursor: pointer;
+  }
+  .replay-btn:hover { background: #333; border-color: var(--accent); }
+  .replay-btn:disabled { opacity: 0.3; cursor: default; }
+  .replay-pos {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    color: var(--accent); flex: 1; text-align: center;
+  }
+  .goto-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+  .goto-input {
+    width: 56px; background: #111; border: 1px solid var(--border);
+    border-radius: 3px; color: var(--text);
+    font-family: 'JetBrains Mono', monospace; font-size: 13px;
+    padding: 4px 6px; text-align: center;
+  }
+  .goto-input:focus { outline: none; border-color: var(--accent); }
+
+  /* Variation badge */
+  .var-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: #082a1e; border: 1px solid #2a8a5a;
+    border-radius: 3px; padding: 3px 8px; font-size: 10px; color: #4acf8a;
+    margin-top: 6px;
+  }
+  .var-badge.hidden { display: none; }
+
+  /* Game meta info */
+  .meta-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .meta-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .meta-label {
+    font-size: 10px;
+    color: var(--text-dim);
+    width: 36px;
+    flex-shrink: 0;
+  }
+  .meta-input {
+    flex: 1;
+    background: #111;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text);
+    font-family: 'Noto Serif KR', serif;
+    font-size: 12px;
+    padding: 5px 8px;
+    min-width: 0;
+  }
+  .meta-input:focus { outline: none; border-color: var(--accent); }
+  .meta-input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.7);
+    cursor: pointer;
+  }
+  .meta-input::placeholder { color: var(--text-dim); }
+
+</style>
+</head>
+<body>
+<div class="app">
+
+<div class="board-section" id="board-section">
+  <div class="board-title">바둑 기보</div>
+  <div class="board-wrap">
+    <div class="col-labels" id="col-labels"></div>
+    <div class="row-labels" id="row-labels"></div>
+    <canvas id="board"></canvas>
+  </div>
+</div>
+
+<div class="right-panel">
+
+  <!-- 대국 정보 -->
+  <div class="panel-block">
+    <div class="panel-label">대국 정보</div>
+    <div class="meta-row">
+      <div class="meta-field">
+        <span class="meta-label">⚫ 흑</span>
+        <input class="meta-input" type="text" id="meta-black" placeholder="흑 이름 (선택)">
+      </div>
+      <div class="meta-field">
+        <span class="meta-label">⚪ 백</span>
+        <input class="meta-input" type="text" id="meta-white" placeholder="백 이름 (선택)">
+      </div>
+      <div class="meta-field">
+        <span class="meta-label">📅 날짜</span>
+        <input class="meta-input" type="date" id="meta-date">
+      </div>
+    </div>
+  </div>
+
+  <!-- 착수 정보 + 사석 카운터 -->
+  <div class="panel-block">
+    <div class="panel-label">착수 정보</div>
+    <div class="turn-row">
+      <div class="stone-preview black" id="stone-icon"></div>
+      <span class="turn-text" id="turn-text">흑 차례</span>
+      <span class="move-count" id="move-count">0</span>
+    </div>
+    <div class="capture-row">
+      <div class="cap-box">
+        <span class="cap-label">⚫ 흑 사석</span>
+        <span class="cap-count" id="cap-black">0</span>
+      </div>
+      <div class="cap-box">
+        <span class="cap-label">⚪ 백 사석</span>
+        <span class="cap-count" id="cap-white">0</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 리플레이 컨트롤 -->
+  <div class="panel-block">
+    <div class="panel-label">리플레이</div>
+    <div class="replay-row">
+      <button class="replay-btn" onclick="replayGo(0)" title="처음">⏮</button>
+      <button class="replay-btn" onclick="replayStep(-1)" title="이전 수">◀</button>
+      <span class="replay-pos" id="replay-pos">— / —</span>
+      <button class="replay-btn" onclick="replayStep(1)" title="다음 수">▶</button>
+      <button class="replay-btn" onclick="replayGo(9999)" title="끝">⏭</button>
+    </div>
+    <div class="goto-row">
+      <label style="font-size:11px;color:var(--text-dim)">N수로 이동</label>
+      <input class="goto-input" type="number" id="goto-input" min="0" placeholder="0">
+      <button onclick="replayGoToInput()">이동</button>
+    </div>
+    <div class="var-badge hidden" id="var-badge">✦ 분기 기보 모드</div>
+  </div>
+
+  <!-- 접바둑 -->
+  <div class="panel-block">
+    <div class="panel-label">접바둑 설정</div>
+    <div class="handicap-row">
+      <label style="font-size:12px; color:var(--text-dim);">접바둑 돌 수</label>
+      <input class="handicap-input" type="number" id="handicap-count" min="2" max="9" value="2">
+      <button onclick="startHandicap()">접바둑 시작</button>
+      <button onclick="cancelHandicap()" class="danger" id="cancel-handi-btn" style="display:none;">× 취소</button>
+    </div>
+    <div class="phase-indicator" id="phase-indicator"></div>
+    <div class="handicap-badge hidden" id="handicap-badge">
+      <span>접바둑</span><span id="handicap-badge-num"></span>점
+    </div>
+  </div>
+
+  <!-- 컨트롤 -->
+  <div class="panel-block">
+    <div class="panel-label">컨트롤</div>
+    <div class="btn-row">
+      <button onclick="undoMove()">↩ 1수 무르기</button>
+      <button onclick="resetBoard()" class="danger">× 초기화</button>
+    </div>
+  </div>
+
+  <!-- 착수 기록 -->
+  <div class="panel-block" style="flex:1; display:flex; flex-direction:column;">
+    <div class="panel-label">착수 기록</div>
+    <div class="log-list" id="log-list"></div>
+  </div>
+
+  <!-- 내보내기 -->
+  <div class="panel-block">
+    <div class="panel-label">내보내기</div>
+    <div class="btn-row">
+      <button onclick="downloadJSON()">↓ JSON 다운로드</button>
+      <button onclick="copyData()">클립보드 복사</button>
+      <button onclick="downloadImage()">↓ 이미지 저장 (JPG)</button>
+    </div>
+    <span class="copy-notice" id="copy-notice" style="margin-top:6px; display:block;"></span>
+  </div>
+
+  <!-- 불러오기 -->
+  <div class="panel-block">
+    <div class="panel-label">기보 불러오기 (Import)</div>
+    <label class="file-label" id="file-label">
+      <span id="file-label-text">📂 JSON 파일 선택...</span>
+      <input type="file" id="import-file" accept=".json" onchange="handleFileImport(event)">
+    </label>
+    <span class="copy-notice" id="import-notice" style="margin-top:6px; display:block;"></span>
+  </div>
+
+</div><!-- /.right-panel -->
+</div><!-- /.app -->
+
+<script>
+// === Constants ===
+const COLS = 'ABCDEFGHJKLMNOPQRST'; // no 'I' — standard Go notation
+const ROWS = 19;
+const MARGIN = 16; // margin from canvas edge to first line
+
+// Responsive cell size — board fits within viewport height (minus title + padding)
+// Available height for board ≈ vh - 60px
+// CANVAS_SIZE = MARGIN*2 + 18*CELL  →  CELL = floor((available - MARGIN*2) / 18)
+function calcCell() {
+  // visualViewport gives actual visible area on iOS (excludes browser chrome)
+  const vv = window.visualViewport;
+  const vw = vv ? vv.width  : window.innerWidth;
+  const vh = vv ? vv.height : window.innerHeight;
+
+  // Board area: 80% of width minus paddings, constrained by height minus paddings
+  const availW = vw * 0.80 - 46;  // 80% width - label(22) - paddings(24)
+  const availH = vh - 56;          // full height - title(20) - top/bottom padding(36)
+  const avail  = Math.min(availW, availH);
+  return Math.max(14, Math.floor((avail - MARGIN * 2) / 18));
+}
+let CELL = calcCell();
+let CANVAS_SIZE = MARGIN * 2 + (ROWS - 1) * CELL;
+
+function updateBoardSectionWidth() {
+  // board-section width is controlled by CSS (80vw); no JS override needed
+}
+
+// Star points for 19x19
+const STAR_POINTS = [
+  [3,3],[3,9],[3,15],
+  [9,3],[9,9],[9,15],
+  [15,3],[15,9],[15,15]
+];
+
+// Standard handicap stone positions (by count) — 0-based col/row indices
+// Positions: D4=col3,row3 / Q16=col15,row15 / etc.
+const HANDICAP_POSITIONS = {
+  2: [[3,15],[15,3]],
+  3: [[3,15],[15,3],[15,15]],
+  4: [[3,3],[3,15],[15,3],[15,15]],
+  5: [[3,3],[3,15],[9,9],[15,3],[15,15]],
+  6: [[3,3],[3,9],[3,15],[15,3],[15,9],[15,15]],
+  7: [[3,3],[3,9],[3,15],[9,9],[15,3],[15,9],[15,15]],
+  8: [[3,3],[3,9],[3,15],[9,3],[9,15],[15,3],[15,9],[15,15]],
+  9: [[3,3],[3,9],[3,15],[9,3],[9,9],[9,15],[15,3],[15,9],[15,15]],
+};
+
+
+// === Game Meta ===
+function getMeta() {
+  return {
+    흑: document.getElementById('meta-black').value.trim() || null,
+    백: document.getElementById('meta-white').value.trim() || null,
+    날짜: document.getElementById('meta-date').value || null,
+  };
+}
+
+function setMeta(meta) {
+  if (!meta) return;
+  const toVal = v => (!v || v === 'none') ? '' : v;
+  document.getElementById('meta-black').value = toVal(meta['흑']);
+  document.getElementById('meta-white').value = toVal(meta['백']);
+  document.getElementById('meta-date').value  = toVal(meta['날짜']);
+}
+
+// === State ===
+let moves = []; // { num, color, col, row, coord, isHandicap?, captured?, capturedBy? }
+let boardState = {}; // key: "col-row" → { num, color, isHandicap? }
+let currentColor = 'black';
+
+// Handicap state
+let handicapMode = false;
+let handicapTotal = 0;
+let handicapPlaced = 0;
+let handicapAuto = false;
+
+// Replay / Variation state
+let fullMoves = [];    // complete move list (source of truth for replay)
+let replayIdx = -1;    // -1 = not in replay mode; >= 0 = viewing up to this index
+let isVariation = false; // true if user diverged from loaded game
+
+// === Canvas Setup ===
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+
+function resizeCanvas() {
+  CELL = calcCell();
+  CANVAS_SIZE = MARGIN * 2 + (ROWS - 1) * CELL;
+  canvas.width  = CANVAS_SIZE;
+  canvas.height = CANVAS_SIZE;
+  updateBoardSectionWidth();
+  rebuildLabels();
+  drawBoard();
+}
+
+// Debounced resize
+let resizeTimer;
+function debouncedResize() {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(resizeCanvas, 150);
+}
+window.addEventListener('resize', debouncedResize);
+// visualViewport fires on iOS when address bar shows/hides
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', debouncedResize);
+}
+
+// === Labels ===
+function rebuildLabels() {
+  const colDiv = document.getElementById('col-labels');
+  colDiv.innerHTML = '';
+  COLS.split('').forEach(c => {
+    const s = document.createElement('span');
+    s.textContent = c;
+    s.style.width = CELL + 'px';
+    colDiv.appendChild(s);
+  });
+
+  const rowDiv = document.getElementById('row-labels');
+  rowDiv.innerHTML = '';
+  for (let r = ROWS; r >= 1; r--) {
+    const s = document.createElement('span');
+    s.textContent = r;
+    s.style.height = CELL + 'px';
+    rowDiv.appendChild(s);
+  }
+}
+
+function buildLabels() { rebuildLabels(); }
+
+// === Coordinate Helpers ===
+function gridToCanvas(col, row) {
+  // col: 0-based index (0=A), row: 0-based from bottom (0=1)
+  const x = MARGIN + col * CELL;
+  const y = MARGIN + (ROWS - 1 - row) * CELL;
+  return { x, y };
+}
+
+function canvasToGrid(px, py) {
+  const col = Math.round((px - MARGIN) / CELL);
+  const row = ROWS - 1 - Math.round((py - MARGIN) / CELL);
+  return { col, row };
+}
+
+function coordLabel(col, row) {
+  return `${COLS[col]}-${row + 1}`;
+}
+
+// === Drawing ===
+function drawBoard() {
+  ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+  // Board background — warm wood texture via gradient
+  const grad = ctx.createLinearGradient(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+  grad.addColorStop(0, '#D4A84B');
+  grad.addColorStop(0.5, '#C49A40');
+  grad.addColorStop(1, '#B88C35');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+  // Grid lines
+  ctx.strokeStyle = '#7a5a20';
+  ctx.lineWidth = 0.8;
+  for (let i = 0; i < ROWS; i++) {
+    const { x: x0, y: y0 } = gridToCanvas(0, i);
+    const { x: x1 } = gridToCanvas(ROWS - 1, i);
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y0); ctx.stroke();
+
+    const { x: cx, y: cy0 } = gridToCanvas(i, 0);
+    const { y: cy1 } = gridToCanvas(i, ROWS - 1);
+    ctx.beginPath(); ctx.moveTo(cx, cy0); ctx.lineTo(cx, cy1); ctx.stroke();
+  }
+
+  // Border (thicker outer lines)
+  ctx.strokeStyle = '#5a3d10';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(MARGIN, MARGIN, (ROWS - 1) * CELL, (ROWS - 1) * CELL);
+
+  // Star points
+  ctx.fillStyle = '#5a3d10';
+  STAR_POINTS.forEach(([c, r]) => {
+    const { x, y } = gridToCanvas(c, r);
+    ctx.beginPath();
+    ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Stones (live)
+  Object.entries(boardState).forEach(([key, data]) => {
+    const [col, row] = key.split('-').map(Number);
+    drawStone(col, row, data.color, data.num, data.isHandicap);
+  });
+
+  // Ghost numbers — for every intersection that has NO live stone,
+  // show the move number of the most recently placed stone there
+  // (whether it was captured or not, as long as it's now gone).
+  // Rule: latest by m.num wins (covers multi-capture on same spot).
+  const ghostMap = {}; // "col-row" → move num to display
+  moves.forEach(m => {
+    const key = `${m.col}-${m.row}`;
+    if (boardState[key]) return; // live stone present — no ghost needed
+    const prev = ghostMap[key];
+    if (prev === undefined || m.num > prev) {
+      ghostMap[key] = m.num;
+    }
+  });
+
+  Object.entries(ghostMap).forEach(([key, num]) => {
+    const [col, row] = key.split('-').map(Number);
+    drawCapturedGhost(col, row, num);
+  });
+}
+
+function drawStone(col, row, color, num, isHandicap) {
+  const { x, y } = gridToCanvas(col, row);
+  const r = CELL * 0.46;
+
+  // Shadow
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.5)';
+  ctx.shadowBlur = 4;
+  ctx.shadowOffsetX = 1.5;
+  ctx.shadowOffsetY = 1.5;
+
+  // Stone body
+  const grad = ctx.createRadialGradient(x - r*0.3, y - r*0.3, r*0.05, x, y, r);
+  if (color === 'black') {
+    grad.addColorStop(0, '#555');
+    grad.addColorStop(1, '#0d0d0d');
+  } else {
+    grad.addColorStop(0, '#fff');
+    grad.addColorStop(0.7, '#e8e0d0');
+    grad.addColorStop(1, '#c8c0b0');
+  }
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // Stone border
+  if (color === 'white') {
+    ctx.strokeStyle = '#aaa';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Handicap stone: gold ring indicator
+  if (isHandicap) {
+    ctx.strokeStyle = 'rgba(196,154,69,0.85)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(x, y, r - 2, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Move number
+  ctx.fillStyle = color === 'black' ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.7)';
+  ctx.font = `bold ${num > 99 ? 8 : num > 9 ? 10 : 11}px JetBrains Mono, monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(num, x, y + 0.5);
+}
+
+// Draw move number at empty intersection where a stone was captured
+function drawCapturedGhost(col, row, num) {
+  const { x, y } = gridToCanvas(col, row);
+  const r = CELL * 0.42;
+  const fontSize = num > 99 ? Math.max(7, CELL * 0.25)
+                 : num > 9  ? Math.max(8, CELL * 0.30)
+                 :             Math.max(9, CELL * 0.35);
+
+  // Dashed circle outline
+  ctx.save();
+  ctx.strokeStyle = 'rgba(90, 60, 20, 0.6)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 2]);
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Number — white, visible on wood background
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.font = `bold ${fontSize}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(String(num), x, y + 0.5);
+  ctx.restore();
+}
+
+// === Click Handler ===
+canvas.addEventListener('click', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const px = (e.clientX - rect.left) * scaleX;
+  const py = (e.clientY - rect.top) * scaleY;
+
+  const { col, row } = canvasToGrid(px, py);
+  if (col < 0 || col >= ROWS || row < 0 || row >= ROWS) return;
+
+  const key = `${col}-${row}`;
+  if (boardState[key]) return; // occupied
+
+  // Snap check — only place if close enough to intersection
+  const { x, y } = gridToCanvas(col, row);
+  const dist = Math.hypot(px - x, py - y);
+  if (dist > CELL * 0.5) return;
+
+  if (handicapMode) {
+    placeHandicapStone(col, row);
+  } else {
+    placeStone(col, row);
+  }
+});
+
+// === Capture (사석) Logic ===
+
+// Returns array of [col, row] neighbors within board
+function neighbors(col, row) {
+  return [[col-1,row],[col+1,row],[col,row-1],[col,row+1]]
+    .filter(([c,r]) => c>=0 && c<ROWS && r>=0 && r<ROWS);
+}
+
+// Flood-fill: returns Set of "col-row" keys forming the connected group
+function getGroup(col, row, state) {
+  const color = state[`${col}-${row}`]?.color;
+  if (!color) return new Set();
+  const visited = new Set();
+  const stack = [[col, row]];
+  while (stack.length) {
+    const [c, r] = stack.pop();
+    const k = `${c}-${r}`;
+    if (visited.has(k)) continue;
+    if (state[k]?.color !== color) continue;
+    visited.add(k);
+    neighbors(c, r).forEach(([nc, nr]) => {
+      if (!visited.has(`${nc}-${nr}`)) stack.push([nc, nr]);
+    });
+  }
+  return visited;
+}
+
+// Count liberties of a group (empty adjacent intersections)
+function getLiberties(group, state) {
+  const libs = new Set();
+  group.forEach(k => {
+    const [c, r] = k.split('-').map(Number);
+    neighbors(c, r).forEach(([nc, nr]) => {
+      if (!state[`${nc}-${nr}`]) libs.add(`${nc}-${nr}`);
+    });
+  });
+  return libs;
+}
+
+// Remove captured stones; returns array of captured move records
+function removeCaptured(placedColor, state, movesList) {
+  const oppColor = placedColor === 'black' ? 'white' : 'black';
+  const captured = [];
+  const visited = new Set();
+
+  Object.keys(state).forEach(k => {
+    if (visited.has(k)) return;
+    if (state[k]?.color !== oppColor) return;
+    const [c, r] = k.split('-').map(Number);
+    const group = getGroup(c, r, state);
+    group.forEach(gk => visited.add(gk));
+    if (getLiberties(group, state).size === 0) {
+      // Captured — mark each stone's move record as captured
+      group.forEach(gk => {
+        const mv = movesList.find(m => `${m.col}-${m.row}` === gk && !m.captured);
+        if (mv) {
+          mv.captured = true;
+          mv.capturedBy = movesList.length; // will be updated to actual move num after push
+        }
+        captured.push(gk);
+        delete state[gk];
+      });
+    }
+  });
+  return captured;
+}
+
+function placeStone(col, row, forceColor) {
+  const color = forceColor || currentColor;
+  const num = moves.length + 1;
+  const key = `${col}-${row}`;
+  const coord = coordLabel(col, row);
+
+  // Temporarily place stone to test validity
+  boardState[key] = { num, color };
+  const move = { num, color, col, row, coord };
+  moves.push(move);
+
+  // 1. Remove opponent stones with no liberties (captures)
+  const capturedKeys = removeCaptured(color, boardState, moves);
+
+  // Update capturedBy to actual move num
+  capturedKeys.forEach(gk => {
+    const mv = moves.find(m => `${m.col}-${m.row}` === gk && m.captured);
+    if (mv) mv.capturedBy = num;
+  });
+
+  // 2. Check self-capture (suicide) — if placed stone's group has no liberties, remove it
+  const ownGroup = getGroup(col, row, boardState);
+  if (getLiberties(ownGroup, boardState).size === 0) {
+    // Suicide: remove own stone, revert move
+    delete boardState[key];
+    moves.pop();
+    return; // illegal move — silently ignore
+  }
+
+  // If replaying and user places a stone → enter variation mode
+  if (replayIdx >= 0 || (fullMoves.length > 0 && moves.length < fullMoves.length)) {
+    if (!isVariation) {
+      isVariation = true;
+      document.getElementById('var-badge').classList.remove('hidden');
+    }
+    // Trim fullMoves to current position — variation branches here
+    fullMoves = moves.slice(); // will be updated after push below
+    replayIdx = -1;
+  }
+
+  currentColor = color === 'black' ? 'white' : 'black';
+  // Sync fullMoves with live moves
+  fullMoves = moves.slice();
+  drawBoard();
+  updateUI();
+}
+
+
+// === Handicap Logic ===
+function startHandicap() {
+  moves = [];
+  boardState = {};
+  currentColor = 'black';
+
+  const raw = parseInt(document.getElementById('handicap-count').value);
+  const count = isNaN(raw) ? 2 : Math.min(9, Math.max(2, raw));
+
+  handicapTotal = count;
+  handicapPlaced = 0;
+  currentColor = 'black';
+
+  // Auto-place if standard count (2~9) using fixed positions
+  if (HANDICAP_POSITIONS[count]) {
+    handicapMode = false;
+    handicapAuto = true;
+    const positions = HANDICAP_POSITIONS[count];
+    positions.forEach(([c, r]) => {
+      const num = moves.length + 1;
+      const key = `${c}-${r}`;
+      const coord = coordLabel(c, r);
+      moves.push({ num, color: 'black', col: c, row: r, coord, isHandicap: true });
+      boardState[key] = { num, color: 'black', isHandicap: true };
+    });
+    // After handicap stones placed → white's turn
+    currentColor = 'white';
+    finishHandicapSetup(count);
+    fullMoves = moves.slice();
+    replayIdx = -1;
+    drawBoard();
+    updateUI();
+  } else {
+    // Manual placement mode (shouldn't reach here with 2~9 constraint, kept for extensibility)
+    handicapMode = true;
+    handicapAuto = false;
+    document.getElementById('cancel-handi-btn').style.display = '';
+    updatePhaseIndicator();
+    drawBoard();
+    updateUI();
+  }
+}
+
+function placeHandicapStone(col, row) {
+  if (!handicapMode) return;
+  const num = moves.length + 1;
+  const key = `${col}-${row}`;
+  const coord = coordLabel(col, row);
+
+  moves.push({ num, color: 'black', col, row, coord, isHandicap: true });
+  boardState[key] = { num, color: 'black', isHandicap: true };
+  handicapPlaced++;
+
+  if (handicapPlaced >= handicapTotal) {
+    // Handicap placement done → switch to white
+    handicapMode = false;
+    currentColor = 'white';
+    finishHandicapSetup(handicapTotal);
+  }
+
+  drawBoard();
+  updateUI();
+  updatePhaseIndicator();
+}
+
+function cancelHandicap() {
+  handicapMode = false;
+  handicapTotal = 0;
+  handicapPlaced = 0;
+  moves = [];
+  boardState = {};
+  currentColor = 'black';
+  document.getElementById('cancel-handi-btn').style.display = 'none';
+  document.getElementById('handicap-badge').classList.add('hidden');
+  document.getElementById('phase-indicator').textContent = '';
+  drawBoard();
+  updateUI();
+}
+
+function finishHandicapSetup(count) {
+  handicapMode = false;
+  document.getElementById('cancel-handi-btn').style.display = 'none';
+  document.getElementById('phase-indicator').textContent = `접바둑 ${count}점 — 백 선착`;
+  document.getElementById('phase-indicator').className = 'phase-indicator active';
+  const badge = document.getElementById('handicap-badge');
+  badge.classList.remove('hidden');
+  document.getElementById('handicap-badge-num').textContent = count;
+  setTimeout(() => {
+    document.getElementById('phase-indicator').className = 'phase-indicator';
+  }, 3000);
+}
+
+function updatePhaseIndicator() {
+  const el = document.getElementById('phase-indicator');
+  if (handicapMode) {
+    const remaining = handicapTotal - handicapPlaced;
+    el.textContent = `접바둑 배치 중 — 흑돌 ${remaining}개 남음 (클릭하여 배치)`;
+    el.className = 'phase-indicator active';
+  } else {
+    el.textContent = '';
+    el.className = 'phase-indicator';
+  }
+}
+
+function undoMove() {
+  if (moves.length === 0) return;
+
+  if (handicapMode && handicapPlaced > 0) {
+    const last = moves.pop();
+    delete boardState[`${last.col}-${last.row}`];
+    handicapPlaced--;
+    drawBoard(); updateUI(); updatePhaseIndicator();
+    return;
+  }
+
+  const last = moves[moves.length - 1];
+  if (last.isHandicap) return;
+
+  moves.pop();
+  delete boardState[`${last.col}-${last.row}`];
+
+  // Restore stones captured by this move
+  moves.forEach(m => {
+    if (m.captured && m.capturedBy === last.num) {
+      m.captured = false;
+      m.capturedBy = undefined;
+      boardState[`${m.col}-${m.row}`] = { num: m.num, color: m.color, isHandicap: m.isHandicap };
+    }
+  });
+
+  currentColor = last.color;
+  drawBoard(); updateUI();
+}
+
+function resetBoard() {
+  moves = [];
+  boardState = {};
+  currentColor = 'black';
+  handicapMode = false;
+  handicapTotal = 0;
+  handicapPlaced = 0;
+  fullMoves = [];
+  replayIdx = -1;
+  isVariation = false;
+  document.getElementById('cancel-handi-btn').style.display = 'none';
+  document.getElementById('handicap-badge').classList.add('hidden');
+  document.getElementById('var-badge').classList.add('hidden');
+  document.getElementById('phase-indicator').textContent = '';
+  document.getElementById('phase-indicator').className = 'phase-indicator';
+  // Clear meta fields
+  document.getElementById('meta-black').value = '';
+  document.getElementById('meta-white').value = '';
+  document.getElementById('meta-date').value  = '';
+  drawBoard();
+  updateUI();
+}
+
+// === Replay Engine ===
+// Simulate the game from move 0 to fullMoves[upTo] step by step,
+// applying capture rules fresh — do NOT rely on stored captured flags.
+function rebuildBoardAt(upTo) {
+  const state = {};   // live board at step upTo
+  const mList = [];   // move records up to upTo (captured flags recomputed)
+
+  for (let i = 0; i <= upTo && i < fullMoves.length; i++) {
+    const fm = fullMoves[i];
+    const mv = { ...fm, captured: false, capturedBy: undefined };
+    mList.push(mv);
+
+    const key = `${fm.col}-${fm.row}`;
+    state[key] = { num: fm.num, color: fm.color, isHandicap: fm.isHandicap };
+
+    if (!fm.isHandicap) {
+      // Remove opponent groups with no liberties
+      const oppColor = fm.color === 'black' ? 'white' : 'black';
+      const visitedCap = new Set();
+      Object.keys(state).forEach(k => {
+        if (visitedCap.has(k)) return;
+        if (state[k]?.color !== oppColor) return;
+        const [c, r] = k.split('-').map(Number);
+        const group = getGroup(c, r, state);
+        group.forEach(gk => visitedCap.add(gk));
+        if (getLiberties(group, state).size === 0) {
+          group.forEach(gk => {
+            delete state[gk];
+            // Mark the corresponding move in mList as captured
+            const capMv = mList.find(m => `${m.col}-${m.row}` === gk && !m.captured);
+            if (capMv) { capMv.captured = true; capMv.capturedBy = fm.num; }
+          });
+        }
+      });
+    }
+  }
+
+  return { state, mList };
+}
+
+function replayGo(idx) {
+  if (fullMoves.length === 0) return;
+  const target = Math.max(0, Math.min(idx, fullMoves.length - 1));
+  replayIdx = target;
+
+  const { state, mList } = rebuildBoardAt(target);
+  boardState = state;
+  moves = mList;
+
+  const last = fullMoves[target];
+  currentColor = last.color === 'black' ? 'white' : 'black';
+
+  drawBoard();
+  updateUI();
+}
+
+function replayStep(delta) {
+  if (fullMoves.length === 0) return;
+  const cur = replayIdx < 0 ? fullMoves.length - 1 : replayIdx;
+  replayGo(cur + delta);
+}
+
+function replayGoToInput() {
+  const v = parseInt(document.getElementById('goto-input').value);
+  if (isNaN(v)) return;
+  // v is move number (1-based); convert to 0-based index
+  const idx = fullMoves.findIndex(m => m.num === v);
+  if (idx >= 0) replayGo(idx);
+  else replayGo(v - 1); // fallback: treat as index
+}
+
+// === UI Update ===
+function updateUI() {
+  // Turn indicator
+  const icon = document.getElementById('stone-icon');
+  icon.className = `stone-preview ${currentColor}`;
+  document.getElementById('turn-text').textContent = currentColor === 'black' ? '흑 차례' : '백 차례';
+  document.getElementById('move-count').textContent = moves.length;
+
+  // Capture counters — count captured opponent stones
+  // black captures = white stones marked captured; white captures = black stones marked captured
+  const capByBlack = moves.filter(m => m.captured && m.color === 'white').length;
+  const capByWhite = moves.filter(m => m.captured && m.color === 'black').length;
+  document.getElementById('cap-black').textContent = capByBlack; // white stones black captured
+  document.getElementById('cap-white').textContent = capByWhite; // black stones white captured
+
+  // Replay position
+  const total = fullMoves.length;
+  const cur = replayIdx >= 0 ? replayIdx + 1 : moves.length;
+  document.getElementById('replay-pos').textContent =
+    total > 0 ? `${cur} / ${total}` : `${moves.length} / ${moves.length}`;
+
+  // Log
+  const log = document.getElementById('log-list');
+  log.innerHTML = '';
+  [...moves].reverse().forEach(m => {
+    const item = document.createElement('div');
+    const isCap = m.captured;
+    item.className = `log-item${m.isHandicap ? ' handicap' : ''}${isCap ? ' captured' : ''}`;
+    const label = m.isHandicap ? '접바둑' : (m.color === 'black' ? '흑' : '백');
+    const capTag = isCap ? `<span class="log-cap">사석(${m.capturedBy}수)</span>` : '';
+    item.innerHTML = `
+      <span class="log-num">${m.num}</span>
+      <span class="log-dot ${m.color}"></span>
+      <span class="log-coord">${m.coord}</span>
+      <span class="log-color">${label}</span>
+      ${capTag}
+    `;
+    log.appendChild(item);
+  });
+}
+
+function buildExportData() {
+  const meta = getMeta();
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+  const header = {
+    흑: meta['흑'] || 'none',
+    백: meta['백'] || 'none',
+    날짜: meta['날짜'] || today,
+  };
+
+  const moveList = moves.map(m => ({
+    순서: m.num,
+    색: m.color === 'black' ? '흑' : '백',
+    좌표: m.coord,
+    ...(m.isHandicap ? { 유형: '접바둑' } : {}),
+    ...(m.captured ? { 사석: true, 사석처리수: m.capturedBy } : {})
+  }));
+
+  return { ...header, 착수: moveList };
+}
+
+function downloadJSON() {
+  if (moves.length === 0) return;
+  const data = buildExportData();
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  // Filename: baduk-kibo-YYYYMMDD-HHmm.json
+  const now = new Date();
+  const ts = now.getFullYear().toString()
+    + String(now.getMonth()+1).padStart(2,'0')
+    + String(now.getDate()).padStart(2,'0')
+    + '-' + String(now.getHours()).padStart(2,'0')
+    + String(now.getMinutes()).padStart(2,'0');
+  a.download = `baduk-kibo-${ts}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function copyData() {
+  if (moves.length === 0) return;
+  const json = JSON.stringify(buildExportData(), null, 2);
+  navigator.clipboard.writeText(json).then(() => {
+    const notice = document.getElementById('copy-notice');
+    notice.textContent = '복사됨';
+    notice.style.color = 'var(--accent)';
+    notice.style.opacity = '1';
+    setTimeout(() => { notice.style.opacity = '0'; }, 1500);
+  });
+}
+
+// === Import — file picker ===
+function handleFileImport(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  document.getElementById('file-label-text').textContent = `📄 ${file.name}`;
+  const reader = new FileReader();
+  reader.onload = (e) => loadFromJSONString(e.target.result);
+  reader.readAsText(file, 'utf-8');
+  // Reset input so same file can be re-selected
+  event.target.value = '';
+}
+
+function loadFromJSONString(raw) {
+  const notice = document.getElementById('import-notice');
+
+  let jsonStr = raw.trim();
+  // Strip // comment lines
+  jsonStr = jsonStr.replace(/^\/\/.*$/gm, '').trim();
+  // Only extract array if the content is NOT a JSON object (doesn't start with {)
+  if (!jsonStr.startsWith('{')) {
+    const arrMatch = jsonStr.match(/\[\s*[\s\S]*\]/);
+    if (arrMatch) jsonStr = arrMatch[0];
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch (e) {
+    notice.textContent = '파싱 오류 — JSON 형식 확인 필요';
+    notice.style.color = '#e05';
+    notice.style.opacity = '1';
+    setTimeout(() => { notice.style.opacity = '0'; }, 3000);
+    return;
+  }
+
+  // Support both legacy plain array and new {meta + 착수:[...]} format
+  let data, importedMeta = null;
+  if (Array.isArray(parsed)) {
+    data = parsed;
+  } else if (parsed && Array.isArray(parsed['착수'])) {
+    data = parsed['착수'];
+    importedMeta = { 흑: parsed['흑'] || null, 백: parsed['백'] || null, 날짜: parsed['날짜'] || null };
+  } else {
+    notice.textContent = '유효한 착수 데이터 없음';
+    notice.style.color = '#e05';
+    notice.style.opacity = '1';
+    setTimeout(() => { notice.style.opacity = '0'; }, 3000);
+    return;
+  }
+
+  if (!data || data.length === 0) {
+    notice.textContent = '유효한 착수 데이터 없음';
+    notice.style.color = '#e05';
+    notice.style.opacity = '1';
+    setTimeout(() => { notice.style.opacity = '0'; }, 3000);
+    return;
+  }
+
+  // Full reset
+  moves = [];
+  boardState = {};
+  currentColor = 'black';
+  handicapMode = false;
+  handicapTotal = 0;
+  handicapPlaced = 0;
+  document.getElementById('cancel-handi-btn').style.display = 'none';
+  document.getElementById('handicap-badge').classList.add('hidden');
+  document.getElementById('phase-indicator').textContent = '';
+
+  data.sort((a, b) => (a['순서'] ?? a.num ?? 0) - (b['순서'] ?? b.num ?? 0));
+
+  let errorCount = 0;
+  let handicapCount = 0;
+
+  data.forEach(entry => {
+    const num       = entry['순서'] ?? entry.num;
+    const colorRaw  = String(entry['색'] ?? entry.color ?? '');
+    const coord     = String(entry['좌표'] ?? entry.coord ?? '');
+    const isHandicap = (entry['유형'] === '접바둑') || colorRaw.includes('[접바둑]');
+    const isCaptured = entry['사석'] === true;
+    const capturedBy = entry['사석처리수'] ?? undefined;
+    const colorClean = colorRaw.replace('[접바둑]', '').trim();
+    const color = (colorClean === '흑' || colorClean === 'black') ? 'black' : 'white';
+
+    const coordMatch = coord.match(/^([A-T])-(\d{1,2})$/i);
+    if (!coordMatch) { errorCount++; return; }
+    const colIdx = COLS.indexOf(coordMatch[1].toUpperCase());
+    const rowIdx = parseInt(coordMatch[2]) - 1;
+    if (colIdx < 0 || rowIdx < 0 || rowIdx >= ROWS) { errorCount++; return; }
+
+    const key = `${colIdx}-${rowIdx}`;
+    const mv = { num, color, col: colIdx, row: rowIdx, coord, isHandicap,
+                 ...(isCaptured ? { captured: true, capturedBy } : {}) };
+    moves.push(mv);
+    // Only put on board if not captured
+    if (!isCaptured) {
+      boardState[key] = { num, color, isHandicap };
+    }
+    if (isHandicap) handicapCount++;
+  });
+
+  if (moves.length > 0) {
+    const last = moves[moves.length - 1];
+    currentColor = last.color === 'black' ? 'white' : 'black';
+  }
+
+  if (handicapCount > 0) {
+    document.getElementById('handicap-badge').classList.remove('hidden');
+    document.getElementById('handicap-badge-num').textContent = handicapCount;
+  }
+
+  // Restore meta if present
+  if (importedMeta) setMeta(importedMeta);
+
+  // Initialize fullMoves for replay
+  fullMoves = moves.slice();
+  replayIdx = fullMoves.length - 1; // start at end of loaded game
+  isVariation = false;
+  document.getElementById('var-badge').classList.add('hidden');
+
+  drawBoard();
+  updateUI();
+
+  const msg = errorCount > 0
+    ? `불러옴 (${moves.length}수, 오류 ${errorCount}건 제외)`
+    : `불러옴 — ${moves.length}수 복원 완료`;
+  notice.textContent = msg;
+  notice.style.color = errorCount > 0 ? '#e8a020' : 'var(--accent)';
+  notice.style.opacity = '1';
+  setTimeout(() => { notice.style.opacity = '0'; }, 3000);
+}
+
+// === Image Download ===
+function downloadImage() {
+  const LABEL_PAD = 28;
+  const PADDING   = 16;
+  const BOARD_PX  = CANVAS_SIZE;
+  const W = LABEL_PAD + BOARD_PX + PADDING;
+  const H = LABEL_PAD + BOARD_PX + PADDING + 20;
+
+  const offscreen = document.createElement('canvas');
+  offscreen.width  = W;
+  offscreen.height = H;
+  const oc = offscreen.getContext('2d');
+
+  // Background
+  oc.fillStyle = '#1a1a1a';
+  oc.fillRect(0, 0, W, H);
+
+  const ox = LABEL_PAD;
+  const oy = LABEL_PAD;
+
+  // Board wood background
+  const grad = oc.createLinearGradient(ox, oy, ox + BOARD_PX, oy + BOARD_PX);
+  grad.addColorStop(0,   '#D4A84B');
+  grad.addColorStop(0.5, '#C49A40');
+  grad.addColorStop(1,   '#B88C35');
+  oc.fillStyle = grad;
+  oc.fillRect(ox, oy, BOARD_PX, BOARD_PX);
+
+  // Grid lines
+  oc.strokeStyle = '#7a5a20';
+  oc.lineWidth = 0.8;
+  for (let i = 0; i < ROWS; i++) {
+    const gx = ox + MARGIN + i * CELL;
+    const gy = oy + MARGIN + i * CELL;
+    oc.beginPath(); oc.moveTo(gx, oy + MARGIN); oc.lineTo(gx, oy + MARGIN + (ROWS-1)*CELL); oc.stroke();
+    oc.beginPath(); oc.moveTo(ox + MARGIN, gy); oc.lineTo(ox + MARGIN + (ROWS-1)*CELL, gy); oc.stroke();
+  }
+
+  // Border
+  oc.strokeStyle = '#5a3d10';
+  oc.lineWidth = 1.5;
+  oc.strokeRect(ox + MARGIN, oy + MARGIN, (ROWS-1)*CELL, (ROWS-1)*CELL);
+
+  // Star points
+  oc.fillStyle = '#5a3d10';
+  STAR_POINTS.forEach(([c, r]) => {
+    const x = ox + MARGIN + c * CELL;
+    const y = oy + MARGIN + (ROWS - 1 - r) * CELL;
+    oc.beginPath(); oc.arc(x, y, 3.5, 0, Math.PI*2); oc.fill();
+  });
+
+  // Column labels A~T
+  oc.fillStyle = '#aaa';
+  oc.font = '10px monospace';
+  oc.textAlign = 'center';
+  oc.textBaseline = 'middle';
+  COLS.split('').forEach((c, i) => {
+    const x = ox + MARGIN + i * CELL;
+    oc.fillText(c, x, oy - 12);
+  });
+
+  // Row labels 1~19
+  oc.textAlign = 'right';
+  for (let r = 0; r < ROWS; r++) {
+    const y = oy + MARGIN + (ROWS - 1 - r) * CELL;
+    oc.fillText(String(r + 1), ox - 5, y);
+  }
+
+  // Stones
+  Object.entries(boardState).forEach(([key, data]) => {
+    const [col, row] = key.split('-').map(Number);
+    const x = ox + MARGIN + col * CELL;
+    const y = oy + MARGIN + (ROWS - 1 - row) * CELL;
+    const r = CELL * 0.46;
+
+    oc.save();
+    oc.shadowColor = 'rgba(0,0,0,0.5)';
+    oc.shadowBlur = 4;
+    oc.shadowOffsetX = 1.5;
+    oc.shadowOffsetY = 1.5;
+    const sg = oc.createRadialGradient(x - r*0.3, y - r*0.3, r*0.05, x, y, r);
+    if (data.color === 'black') {
+      sg.addColorStop(0, '#555'); sg.addColorStop(1, '#0d0d0d');
+    } else {
+      sg.addColorStop(0, '#fff'); sg.addColorStop(0.7, '#e8e0d0'); sg.addColorStop(1, '#c8c0b0');
+    }
+    oc.fillStyle = sg;
+    oc.beginPath(); oc.arc(x, y, r, 0, Math.PI*2); oc.fill();
+    oc.restore();
+
+    if (data.color === 'white') {
+      oc.strokeStyle = '#aaa'; oc.lineWidth = 0.5;
+      oc.beginPath(); oc.arc(x, y, r, 0, Math.PI*2); oc.stroke();
+    }
+    if (data.isHandicap) {
+      oc.strokeStyle = 'rgba(196,154,69,0.85)'; oc.lineWidth = 1.5;
+      oc.beginPath(); oc.arc(x, y, r - 2, 0, Math.PI*2); oc.stroke();
+    }
+
+    oc.fillStyle = data.color === 'black' ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.7)';
+    oc.font = `bold ${data.num > 99 ? 8 : data.num > 9 ? 10 : 11}px monospace`;
+    oc.textAlign = 'center';
+    oc.textBaseline = 'middle';
+    oc.fillText(data.num, x, y + 0.5);
+  });
+
+  // Watermark
+  const now = new Date();
+  const ts = `${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  oc.fillStyle = 'rgba(255,255,255,0.3)';
+  oc.font = '10px monospace';
+  oc.textAlign = 'right';
+  oc.textBaseline = 'bottom';
+  oc.fillText(`바둑 기보  ${ts}  ${moves.length}수`, W - PADDING, H - 4);
+
+  // Trigger download
+  const url = offscreen.toDataURL('image/jpeg', 0.95);
+  const a = document.createElement('a');
+  a.href = url;
+  const tsFn = now.getFullYear().toString()
+    + String(now.getMonth()+1).padStart(2,'0')
+    + String(now.getDate()).padStart(2,'0')
+    + '-' + String(now.getHours()).padStart(2,'0')
+    + String(now.getMinutes()).padStart(2,'0');
+  a.download = `baduk-kibo-${tsFn}.jpg`;
+  a.click();
+}
+
+// === Init ===
+// Double rAF: ensures iOS Safari has settled layout/visualViewport before sizing canvas
+function safeInit() {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      resizeCanvas();
+      updateUI();
+    });
+  });
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', safeInit);
+} else {
+  safeInit();
+}
+// Also fire on load (handles cached pages, back-forward cache)
+window.addEventListener('load', safeInit);
+window.addEventListener('pageshow', safeInit);
+</script>
+</body>
+</html>
